@@ -1,0 +1,31 @@
+{
+  "package": "com.vela.bandchat",
+  "name": "本地助手",
+  "versionName": "1.0.0",
+  "versionCode": 1,
+  "minPlatformVersion": 1000,
+  "icon": "/common/images/logo.png",
+  "deviceTypeList": ["watch"],
+  "features": [
+    { "name": "system.storage" },
+    { "name": "system.sensor" },
+    { "name": "system.alarm" },
+    { "name": "system.vibrator" }
+  ],
+  "config": {
+    "designWidth": 480,
+    "logLevel": "log"
+  },
+  "router": {
+    "entry": "pages/index",
+    "pages": {
+      "pages/index": {
+        "component": "index",
+        "path": "/"
+      }
+    }
+  },
+  "display": {
+    "backgroundColor": "#000000"
+  }
+}

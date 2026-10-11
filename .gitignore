@@ -1,0 +1,6 @@
+node_modules/
+build/
+.temp_*/
+sign/
+*.log
+.DS_Store

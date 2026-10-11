@@ -1,0 +1,284 @@
+<template>
+  <div class="page">
+
+    <!-- 顶部状态栏 -->
+    <div class="bar">
+      <text class="title">本地助手</text>
+      <text class="tag">{{status}}</text>
+      <text class="clear" onclick="onClear">清空</text>
+    </div>
+
+    <!-- 对话历史 -->
+    <list class="chat" id="chat">
+      <list-item class="row {{$item.role}}" type="msg" for="{{messages}}">
+        <text class="bubble {{$item.role}}">{{$item.text}}</text>
+      </list-item>
+    </list>
+
+    <!-- 快捷指令面板：Vela 的 input 组件不支持文本输入，故采用纯点击交互 -->
+    <div class="quick">
+      <text class="chip" onclick="onQuick('你好')">你好</text>
+      <text class="chip" onclick="onQuick('心率')">心率</text>
+      <text class="chip" onclick="onQuick('步数')">步数</text>
+      <text class="chip" onclick="onQuick('卡路里')">卡路里</text>
+      <text class="chip" onclick="onQuick('时间')">时间</text>
+      <text class="chip" onclick="onQuick('今天星期几')">星期几</text>
+      <text class="chip" onclick="onQuick('震动一下')">震动</text>
+      <text class="chip" onclick="onQuick('提醒我10分钟后喝水')">提醒喝水</text>
+    </div>
+
+  </div>
+</template>
+
+<script>
+import vibrator from '@system.vibrator'
+import alarm from '@system.alarm'
+import rules from '../../common/rules'
+import store from '../../common/storage'
+import health from '../../common/health'
+
+const WEEK = ['日', '一', '二', '三', '四', '五', '六']
+const WELCOME = '你好，我是本地小助手，完全离线可用。点击下方指令开始。'
+
+function pad2(n) {
+  return n < 10 ? '0' + n : '' + n
+}
+
+export default {
+  // Vela 官方示例使用 private 声明页面响应式数据；对其赋值会触发 UI 更新
+  private: {
+    messages: [],
+    status: '离线运行',
+    heartRate: 0,
+    steps: 0
+  },
+
+  /* ---------------- 生命周期 ---------------- */
+
+  onInit() {
+    this.restore()
+    const self = this
+    health.startStepCounter(function (n) { self.steps = n })
+  },
+
+  onDestroy() {
+    health.stopStepCounter()
+  },
+
+  /* ---------------- 数据恢复 / 持久化 ---------------- */
+
+  restore() {
+    const self = this
+    store.loadHistory().then(function (list) {
+      if (list && list.length > 0) {
+        self.messages = list
+      } else {
+        self.messages = [{ role: 'bot', text: WELCOME }]
+        self.persist()
+      }
+      self.scrollBottom()
+    })
+    store.loadPrefs().then(function (prefs) {
+      if (prefs && prefs.status) self.status = prefs.status
+    })
+  },
+
+  persist() {
+    store.saveHistory(this.messages)
+  },
+
+  /* ---------------- 对话流程 ---------------- */
+
+  onQuick(text) {
+    this.push('user', text)
+    this.handle(text)
+  },
+
+  handle(text) {
+    const result = rules.match(text, this.buildCtx())
+    this.push('bot', result.text)
+    if (result.intent === 'health_heart') this.refreshHeartRate()
+    this.runAction(result.action)
+    this.persist()
+  },
+
+  // 心率接口在 Vela 上通常不存在，measureHeartRate 会立即回调 null（不做任何伪造）；
+  // 若后续系统开放该接口，这里会自动补一条真实值回复。
+  refreshHeartRate() {
+    const self = this
+    health.measureHeartRate(function (hr) {
+      if (hr && hr > 0) {
+        self.heartRate = hr
+        self.push('bot', '当前心率约 ' + hr + ' 次/分。')
+        self.persist()
+      }
+    })
+  },
+
+  buildCtx() {
+    const d = new Date()
+    return {
+      time: pad2(d.getHours()) + ':' + pad2(d.getMinutes()),
+      date: (d.getMonth() + 1) + '月' + d.getDate() + '日',
+      weekday: '星期' + WEEK[d.getDay()],
+      heartRate: this.heartRate,
+      steps: this.steps,
+      calories: Math.round(this.steps * 0.04),
+      sleep: ''
+    }
+  },
+
+  /* ---------------- 动作执行 ---------------- */
+
+  runAction(action) {
+    if (!action) return
+    if (action === 'vibrate') { this.vibrate(); return }
+    if (action.type === 'alarm') { this.setAlarm(action.delayMin, action.label); return }
+  },
+
+  vibrate() {
+    const self = this
+    try {
+      vibrator.vibrate({
+        mode: 'long',
+        fail: function () {
+          self.push('bot', '当前设备不支持震动。')
+          self.persist()
+        }
+      })
+    } catch (e) {
+      self.push('bot', '当前设备不支持震动。')
+      self.persist()
+    }
+  },
+
+  setAlarm(delayMin, label) {
+    const self = this
+    const target = new Date(Date.now() + delayMin * 60000)
+    try {
+      alarm.setAlarm({
+        hour: target.getHours(),
+        minute: target.getMinutes(),
+        message: label,
+        days: [],          // 空数组 = 一次性闹钟
+        vibrate: true,
+        success: function () {},
+        fail: function () {
+          self.push('bot', '闹钟设置失败，请检查闹钟权限。')
+          self.persist()
+        }
+      })
+    } catch (e) {
+      self.push('bot', '当前设备不支持闹钟接口，请手动设置。')
+      self.persist()
+    }
+  },
+
+  /* ---------------- 列表与视图 ---------------- */
+
+  push(role, text) {
+    const list = this.messages.slice()
+    list.push({ role: role, text: text })
+    while (list.length > store.HISTORY_LIMIT) list.shift()
+    this.messages = list
+    this.scrollBottom()
+  },
+
+  scrollBottom() {
+    const self = this
+    setTimeout(function () {
+      try {
+        const el = self.$element('chat')
+        if (el && el.scrollTo) el.scrollTo({ index: self.messages.length - 1 })
+      } catch (e) {}
+    }, 30)
+  },
+
+  onClear() {
+    const self = this
+    store.clearAll().then(function () {
+      self.messages = [{ role: 'bot', text: '已清空对话，点下方指令继续。' }]
+      self.persist()
+      self.scrollBottom()
+    })
+  }
+}
+</script>
+
+<style>
+.page {
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background-color: #000000;
+}
+
+/* 顶部状态栏 */
+.bar {
+  flex-direction: row;
+  align-items: center;
+  padding: 8px 16px 4px 16px;
+}
+.title {
+  flex: 1;
+  color: #ffffff;
+  font-size: 30px;
+  font-weight: bold;
+}
+.tag {
+  color: #4caf50;
+  font-size: 22px;
+  margin-right: 12px;
+}
+.clear {
+  color: #8a8a8e;
+  font-size: 24px;
+  padding: 4px 8px;
+}
+
+/* 对话列表 */
+.chat {
+  flex: 1;
+  padding: 4px 12px;
+}
+.row {
+  flex-direction: row;
+  margin-bottom: 10px;
+}
+.row.user {
+  justify-content: flex-end;
+}
+.row.bot {
+  justify-content: flex-start;
+}
+.bubble {
+  font-size: 28px;
+  line-height: 38px;
+  padding: 12px 16px;
+  border-radius: 16px;
+  max-width: 84%;
+}
+.bubble.user {
+  background-color: #1f6feb;
+  color: #ffffff;
+}
+.bubble.bot {
+  background-color: #1c1c1e;
+  color: #e6e6e6;
+}
+
+/* 快捷指令面板 */
+.quick {
+  flex-direction: row;
+  flex-wrap: wrap;
+  padding: 4px 12px 14px 12px;
+}
+.chip {
+  font-size: 22px;
+  color: #e6e6e6;
+  background-color: #1c1c1e;
+  border-radius: 20px;
+  padding: 8px 14px;
+  margin: 4px 6px 0 0;
+}
+</style>

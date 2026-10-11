@@ -1,0 +1,15 @@
+{
+  "name": "bandchat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "小米手环10 完全离线本地规则引擎对话助手（Xiaomi Vela JS 应用）",
+  "scripts": {
+    "start": "aiot start",
+    "build": "aiot build",
+    "release": "aiot release",
+    "devices": "aiot getConnectedDevices"
+  },
+  "aiot": {
+    "platform": "watch"
+  }
+}
